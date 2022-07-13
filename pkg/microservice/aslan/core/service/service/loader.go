@@ -75,7 +75,7 @@ func PreloadServiceFromCodeHost(codehostID int, repoOwner, repoName, repoUUID, b
 }
 
 // LoadServiceFromCodeHost 根据提供的codehost信息加载服务
-func LoadServiceFromCodeHost(username string, codehostID int, repoOwner, repoName, repoUUID, branchName, remoteName string, args *LoadServiceReq, log *zap.SugaredLogger) error {
+func LoadServiceFromCodeHost(username string, codehostID int, repoOwner, namespace, repoName, repoUUID, branchName, remoteName string, args *LoadServiceReq, force bool, log *zap.SugaredLogger) error {
 	ch, err := systemconfig.New().GetCodeHost(codehostID)
 	if err != nil {
 		log.Errorf("Failed to load codehost for preload service list, the error is: %+v", err)
@@ -83,13 +83,13 @@ func LoadServiceFromCodeHost(username string, codehostID int, repoOwner, repoNam
 	}
 	switch ch.Type {
 	case setting.SourceFromGithub, setting.SourceFromGitlab:
-		return loadService(username, ch, repoOwner, repoName, branchName, args, log)
+		return loadService(username, ch, repoOwner, namespace, repoName, branchName, args, force, log)
 	case setting.SourceFromGerrit:
-		return loadGerritService(username, ch, repoOwner, repoName, branchName, remoteName, args, log)
+		return loadGerritService(username, ch, repoOwner, repoName, branchName, remoteName, args, force, log)
 	case setting.SourceFromCodeHub:
-		return loadCodehubService(username, ch, repoOwner, repoName, repoUUID, branchName, args, log)
+		return loadCodehubService(username, ch, repoOwner, repoName, repoUUID, branchName, args, force, log)
 	case setting.SourceFromGitee:
-		return loadGiteeService(username, ch, repoOwner, repoName, branchName, remoteName, args, log)
+		return loadGiteeService(username, ch, repoOwner, repoName, branchName, remoteName, args, force, log)
 	default:
 		return e.ErrLoadServiceTemplate.AddDesc("unsupported code source")
 	}
@@ -124,7 +124,7 @@ func preloadGerritService(detail *systemconfig.CodeHost, repoName, branchName, r
 
 	base := path.Join(config.S3StoragePath(), repoName)
 	if _, err := os.Stat(base); os.IsNotExist(err) {
-		err = command.RunGitCmds(detail, setting.GerritDefaultOwner, repoName, branchName, remoteName)
+		err = command.RunGitCmds(detail, setting.GerritDefaultOwner, setting.GerritDefaultOwner, repoName, branchName, remoteName)
 		if err != nil {
 			return nil, e.ErrPreloadServiceTemplate.AddDesc(err.Error())
 		}
@@ -243,7 +243,7 @@ func preloadGiteeService(detail *systemconfig.CodeHost, repoOwner, repoName, bra
 	base := path.Join(config.S3StoragePath(), repoName)
 	if exist, err := util.PathExists(base); !exist {
 		log.Warnf("path does not exist,err:%s", err)
-		err = command.RunGitCmds(detail, repoOwner, repoName, branchName, remoteName)
+		err = command.RunGitCmds(detail, repoOwner, repoOwner, repoName, branchName, remoteName)
 		if err != nil {
 			return nil, e.ErrPreloadServiceTemplate.AddDesc(err.Error())
 		}
@@ -299,13 +299,13 @@ func preloadGiteeService(detail *systemconfig.CodeHost, repoOwner, repoName, bra
 }
 
 // 根据repo信息从gerrit加载服务
-func loadGerritService(username string, ch *systemconfig.CodeHost, repoOwner, repoName, branchName, remoteName string, args *LoadServiceReq, log *zap.SugaredLogger) error {
+func loadGerritService(username string, ch *systemconfig.CodeHost, repoOwner, repoName, branchName, remoteName string, args *LoadServiceReq, force bool, log *zap.SugaredLogger) error {
 	if remoteName == "" {
 		remoteName = "origin"
 	}
 	base := path.Join(config.S3StoragePath(), repoName)
 	if _, err := os.Stat(base); os.IsNotExist(err) {
-		err = command.RunGitCmds(ch, repoOwner, repoName, branchName, remoteName)
+		err = command.RunGitCmds(ch, repoOwner, repoOwner, repoName, branchName, remoteName)
 		if err != nil {
 			return e.ErrLoadServiceTemplate.AddDesc(err.Error())
 		}
@@ -338,6 +338,7 @@ func loadGerritService(username string, ch *systemconfig.CodeHost, repoOwner, re
 			CodehostID:       ch.ID,
 			RepoName:         repoName,
 			RepoOwner:        repoOwner,
+			RepoNamespace:    repoOwner, // TODO gerrit need set namespace?
 			BranchName:       branchName,
 			LoadPath:         args.LoadPath,
 			LoadFromDir:      args.LoadFromDir,
@@ -356,7 +357,7 @@ func loadGerritService(username string, ch *systemconfig.CodeHost, repoOwner, re
 			Commit:           commitInfo,
 			Visibility:       args.Visibility,
 		}
-		_, err = CreateServiceTemplate(username, createSvcArgs, log)
+		_, err = CreateServiceTemplate(username, createSvcArgs, force, log)
 		if err != nil {
 			_, messageMap := e.ErrorMessage(err)
 			if description, ok := messageMap["description"]; ok {
@@ -372,7 +373,7 @@ func loadGerritService(username string, ch *systemconfig.CodeHost, repoOwner, re
 		return e.ErrLoadServiceTemplate.AddDesc(err.Error())
 	}
 	if isValidServiceDir(fileInfos) {
-		return loadServiceFromGerrit(fileInfos, ch.ID, username, branchName, args.LoadPath, filePath, repoOwner, remoteName, repoName, args, commitInfo, log)
+		return loadServiceFromGerrit(fileInfos, ch.ID, username, branchName, args.LoadPath, filePath, repoOwner, remoteName, repoName, args, commitInfo, force, log)
 	}
 	for _, entry := range fileInfos {
 		subtreeLoadPath := fmt.Sprintf("%s/%s", args.LoadPath, entry.Name())
@@ -383,7 +384,7 @@ func loadGerritService(username string, ch *systemconfig.CodeHost, repoOwner, re
 			return e.ErrLoadServiceTemplate.AddDesc(err.Error())
 		}
 		if isValidServiceDir(subtreeInfo) {
-			if err := loadServiceFromGerrit(subtreeInfo, ch.ID, username, branchName, subtreeLoadPath, subtreePath, repoOwner, remoteName, repoName, args, commitInfo, log); err != nil {
+			if err := loadServiceFromGerrit(subtreeInfo, ch.ID, username, branchName, subtreeLoadPath, subtreePath, repoOwner, remoteName, repoName, args, commitInfo, force, log); err != nil {
 				return err
 			}
 		}
@@ -391,7 +392,7 @@ func loadGerritService(username string, ch *systemconfig.CodeHost, repoOwner, re
 	return nil
 }
 
-func loadServiceFromGerrit(tree []os.FileInfo, id int, username, branchName, loadPath, path, repoOwner, remoteName, repoName string, args *LoadServiceReq, commit *models.Commit, log *zap.SugaredLogger) error {
+func loadServiceFromGerrit(tree []os.FileInfo, id int, username, branchName, loadPath, path, repoOwner, remoteName, repoName string, args *LoadServiceReq, commit *models.Commit, force bool, log *zap.SugaredLogger) error {
 	pathList := strings.Split(path, "/")
 	var splittedYaml []string
 	fileName := pathList[len(pathList)-1]
@@ -428,7 +429,7 @@ func loadServiceFromGerrit(tree []os.FileInfo, id int, username, branchName, loa
 		Visibility:       args.Visibility,
 	}
 
-	_, err = CreateServiceTemplate(username, createSvcArgs, log)
+	_, err = CreateServiceTemplate(username, createSvcArgs, force, log)
 	if err != nil {
 		_, messageMap := e.ErrorMessage(err)
 		if description, ok := messageMap["description"]; ok {
@@ -441,7 +442,7 @@ func loadServiceFromGerrit(tree []os.FileInfo, id int, username, branchName, loa
 }
 
 // load codehub service
-func loadCodehubService(username string, ch *systemconfig.CodeHost, repoOwner, repoName, repoUUID, branchName string, args *LoadServiceReq, log *zap.SugaredLogger) error {
+func loadCodehubService(username string, ch *systemconfig.CodeHost, repoOwner, repoName, repoUUID, branchName string, args *LoadServiceReq, force bool, log *zap.SugaredLogger) error {
 	codeHubClient := codehub.NewCodeHubClient(ch.AccessKey, ch.SecretKey, ch.Region, config.ProxyHTTPSAddr(), ch.EnableProxy)
 
 	if !args.LoadFromDir {
@@ -459,25 +460,26 @@ func loadCodehubService(username string, ch *systemconfig.CodeHost, repoOwner, r
 
 		srcPath := fmt.Sprintf("%s/%s/%s/blob/%s/%s", ch.Address, repoOwner, repoName, branchName, args.LoadPath)
 		createSvcArgs := &models.Service{
-			CodehostID:  ch.ID,
-			RepoOwner:   repoOwner,
-			RepoName:    repoName,
-			RepoUUID:    repoUUID,
-			BranchName:  branchName,
-			SrcPath:     srcPath,
-			LoadPath:    args.LoadPath,
-			LoadFromDir: args.LoadFromDir,
-			KubeYamls:   yamls,
-			CreateBy:    username,
-			ServiceName: getFileName(args.LoadPath),
-			Type:        args.Type,
-			ProductName: args.ProductName,
-			Source:      ch.Type,
-			Yaml:        util.CombineManifests(yamls),
-			Commit:      &models.Commit{SHA: commit.ID, Message: commit.Message},
-			Visibility:  args.Visibility,
+			CodehostID:    ch.ID,
+			RepoOwner:     repoOwner,
+			RepoNamespace: repoOwner, // TODO codehub need fill namespace?
+			RepoName:      repoName,
+			RepoUUID:      repoUUID,
+			BranchName:    branchName,
+			SrcPath:       srcPath,
+			LoadPath:      args.LoadPath,
+			LoadFromDir:   args.LoadFromDir,
+			KubeYamls:     yamls,
+			CreateBy:      username,
+			ServiceName:   getFileName(args.LoadPath),
+			Type:          args.Type,
+			ProductName:   args.ProductName,
+			Source:        ch.Type,
+			Yaml:          util.CombineManifests(yamls),
+			Commit:        &models.Commit{SHA: commit.ID, Message: commit.Message},
+			Visibility:    args.Visibility,
 		}
-		if _, err = CreateServiceTemplate(username, createSvcArgs, log); err != nil {
+		if _, err = CreateServiceTemplate(username, createSvcArgs, force, log); err != nil {
 			log.Errorf("Failed to create service template, serviceName:%s error: %s", createSvcArgs.ServiceName, err)
 			_, messageMap := e.ErrorMessage(err)
 			if description, ok := messageMap["description"]; ok {
@@ -492,7 +494,7 @@ func loadCodehubService(username string, ch *systemconfig.CodeHost, repoOwner, r
 		return e.ErrLoadServiceTemplate.AddDesc(err.Error())
 	}
 	if isValidCodehubServiceDir(treeNodes) {
-		return loadServiceFromCodehub(codeHubClient, treeNodes, ch, username, repoOwner, repoName, repoUUID, branchName, args.LoadPath, args, log)
+		return loadServiceFromCodehub(codeHubClient, treeNodes, ch, username, repoOwner, repoName, repoUUID, branchName, args.LoadPath, args, force, log)
 	}
 
 	for _, treeNode := range treeNodes {
@@ -503,7 +505,7 @@ func loadCodehubService(username string, ch *systemconfig.CodeHost, repoOwner, r
 				return e.ErrLoadServiceTemplate.AddDesc(err.Error())
 			}
 			if isValidCodehubServiceDir(subtree) {
-				if err := loadServiceFromCodehub(codeHubClient, subtree, ch, username, repoOwner, repoName, repoUUID, branchName, treeNode.Path, args, log); err != nil {
+				if err := loadServiceFromCodehub(codeHubClient, subtree, ch, username, repoOwner, repoName, repoUUID, branchName, treeNode.Path, args, force, log); err != nil {
 					return err
 				}
 			}
@@ -512,7 +514,7 @@ func loadCodehubService(username string, ch *systemconfig.CodeHost, repoOwner, r
 	return nil
 }
 
-func loadServiceFromCodehub(client *codehub.CodeHubClient, tree []*codehub.TreeNode, ch *systemconfig.CodeHost, username, repoOwner, repoName, repoUUID, branchName, path string, args *LoadServiceReq, log *zap.SugaredLogger) error {
+func loadServiceFromCodehub(client *codehub.CodeHubClient, tree []*codehub.TreeNode, ch *systemconfig.CodeHost, username, repoOwner, repoName, repoUUID, branchName, path string, args *LoadServiceReq, force bool, log *zap.SugaredLogger) error {
 	pathList := strings.Split(path, "/")
 	var splittedYaml []string
 	serviceName := pathList[len(pathList)-1]
@@ -555,7 +557,7 @@ func loadServiceFromCodehub(client *codehub.CodeHubClient, tree []*codehub.TreeN
 		Visibility:  args.Visibility,
 	}
 
-	if _, err = CreateServiceTemplate(username, createSvcArgs, log); err != nil {
+	if _, err = CreateServiceTemplate(username, createSvcArgs, force, log); err != nil {
 		_, messageMap := e.ErrorMessage(err)
 		if description, ok := messageMap["description"]; ok {
 			err = e.ErrLoadServiceTemplate.AddDesc(description.(string))
@@ -567,13 +569,13 @@ func loadServiceFromCodehub(client *codehub.CodeHubClient, tree []*codehub.TreeN
 }
 
 // Load services from gitee based on repo information
-func loadGiteeService(username string, ch *systemconfig.CodeHost, repoOwner, repoName, branchName, remoteName string, args *LoadServiceReq, log *zap.SugaredLogger) error {
+func loadGiteeService(username string, ch *systemconfig.CodeHost, repoOwner, repoName, branchName, remoteName string, args *LoadServiceReq, force bool, log *zap.SugaredLogger) error {
 	if remoteName == "" {
 		remoteName = "origin"
 	}
 	base := path.Join(config.S3StoragePath(), repoName)
 	if _, err := os.Stat(base); os.IsNotExist(err) {
-		err = command.RunGitCmds(ch, repoOwner, repoName, branchName, remoteName)
+		err = command.RunGitCmds(ch, repoOwner, repoName, repoName, branchName, remoteName)
 		if err != nil {
 			return e.ErrLoadServiceTemplate.AddDesc(err.Error())
 		}
@@ -620,7 +622,7 @@ func loadGiteeService(username string, ch *systemconfig.CodeHost, repoOwner, rep
 			Commit:      commitInfo,
 			Visibility:  args.Visibility,
 		}
-		_, err = CreateServiceTemplate(username, createSvcArgs, log)
+		_, err = CreateServiceTemplate(username, createSvcArgs, force, log)
 		if err != nil {
 			_, messageMap := e.ErrorMessage(err)
 			if description, ok := messageMap["description"]; ok {
@@ -636,7 +638,7 @@ func loadGiteeService(username string, ch *systemconfig.CodeHost, repoOwner, rep
 		return e.ErrLoadServiceTemplate.AddDesc(err.Error())
 	}
 	if isValidServiceDir(fileInfos) {
-		return loadServiceFromGitee(fileInfos, ch, username, branchName, args.LoadPath, filePath, repoOwner, remoteName, repoName, args, commitInfo, log)
+		return loadServiceFromGitee(fileInfos, ch, username, branchName, args.LoadPath, filePath, repoOwner, remoteName, repoName, args, commitInfo, force, log)
 	}
 	for _, entry := range fileInfos {
 		subtreeLoadPath := fmt.Sprintf("%s/%s", args.LoadPath, entry.Name())
@@ -647,7 +649,7 @@ func loadGiteeService(username string, ch *systemconfig.CodeHost, repoOwner, rep
 			return e.ErrLoadServiceTemplate.AddDesc(err.Error())
 		}
 		if isValidServiceDir(subtreeInfo) {
-			if err := loadServiceFromGitee(subtreeInfo, ch, username, branchName, subtreeLoadPath, subtreePath, repoOwner, remoteName, repoName, args, commitInfo, log); err != nil {
+			if err := loadServiceFromGitee(subtreeInfo, ch, username, branchName, subtreeLoadPath, subtreePath, repoOwner, remoteName, repoName, args, commitInfo, force, log); err != nil {
 				return err
 			}
 		}
@@ -655,7 +657,7 @@ func loadGiteeService(username string, ch *systemconfig.CodeHost, repoOwner, rep
 	return nil
 }
 
-func loadServiceFromGitee(tree []os.FileInfo, ch *systemconfig.CodeHost, username, branchName, loadPath, path, repoOwner, remoteName, repoName string, args *LoadServiceReq, commit *models.Commit, log *zap.SugaredLogger) error {
+func loadServiceFromGitee(tree []os.FileInfo, ch *systemconfig.CodeHost, username, branchName, loadPath, path, repoOwner, remoteName, repoName string, args *LoadServiceReq, commit *models.Commit, force bool, log *zap.SugaredLogger) error {
 	pathList := strings.Split(path, "/")
 	var splittedYaml []string
 	fileName := pathList[len(pathList)-1]
@@ -690,7 +692,7 @@ func loadServiceFromGitee(tree []os.FileInfo, ch *systemconfig.CodeHost, usernam
 		Visibility:  args.Visibility,
 	}
 
-	_, err = CreateServiceTemplate(username, createSvcArgs, log)
+	_, err = CreateServiceTemplate(username, createSvcArgs, force, log)
 	if err != nil {
 		_, messageMap := e.ErrorMessage(err)
 		if description, ok := messageMap["description"]; ok {
@@ -803,9 +805,12 @@ func validateServiceUpdateGitlab(detail *systemconfig.CodeHost, serviceName, rep
 
 // 根据gerrit repo决定服务是否可以更新这个repo地址
 func validateServiceUpdateGerrit(detail *systemconfig.CodeHost, serviceName, repoName, branchName, remoteName, loadPath string, isDir bool) error {
+	if remoteName == "" {
+		remoteName = "origin"
+	}
 	base := path.Join(config.S3StoragePath(), repoName)
 	if _, err := os.Stat(base); os.IsNotExist(err) {
-		err = command.RunGitCmds(detail, setting.GerritDefaultOwner, repoName, branchName, remoteName)
+		err = command.RunGitCmds(detail, setting.GerritDefaultOwner, setting.GerritDefaultOwner, repoName, branchName, remoteName)
 		if err != nil {
 			return e.ErrValidateServiceUpdate.AddDesc(err.Error())
 		}
@@ -888,10 +893,13 @@ func validateServiceUpdateCodehub(detail *systemconfig.CodeHost, serviceName, re
 
 // Determine whether the service can update the repo address according to the gitee repo
 func validateServiceUpdateGitee(detail *systemconfig.CodeHost, serviceName, repoOwner, repoName, branchName, remoteName, loadPath string, isDir bool) error {
+	if remoteName == "" {
+		remoteName = "origin"
+	}
 	base := path.Join(config.S3StoragePath(), repoName)
 	if exist, err := util.PathExists(base); !exist {
 		log.Warnf("path does not exist,err:%s", err)
-		err := command.RunGitCmds(detail, repoOwner, repoName, branchName, remoteName)
+		err := command.RunGitCmds(detail, repoOwner, repoOwner, repoName, branchName, remoteName)
 		if err != nil {
 			return e.ErrValidateServiceUpdate.AddDesc(err.Error())
 		}

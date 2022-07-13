@@ -48,7 +48,7 @@ type CodeHost struct {
 	// the field determine whether the proxy is enabled
 	EnableProxy        bool           `json:"enable_proxy"`
 	UpdatedAt          int64          `json:"updated_at"`
-	OtherAddress       string         `json:"other_address,omitempty"`
+	Alias              string         `json:"alias,omitempty"`
 	AuthType           types.AuthType `json:"auth_type,omitempty"`
 	SSHKey             string         `json:"ssh_key,omitempty"`
 	PrivateAccessToken string         `json:"private_access_token,omitempty"`
@@ -66,6 +66,18 @@ func GetCodeHostInfo(opt *Option) (*CodeHost, error) {
 
 func (c *Client) GetCodeHost(id int) (*CodeHost, error) {
 	url := fmt.Sprintf("/codehosts/%d", id)
+
+	res := &CodeHost{}
+	_, err := c.Get(url, httpclient.SetResult(res))
+	if err != nil {
+		return nil, err
+	}
+
+	return res, nil
+}
+
+func (c *Client) GetRawCodeHost(id int) (*CodeHost, error) {
+	url := fmt.Sprintf("/codehosts/%d?ignoreDelete=true", id)
 
 	res := &CodeHost{}
 	_, err := c.Get(url, httpclient.SetResult(res))

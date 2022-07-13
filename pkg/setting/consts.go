@@ -104,6 +104,9 @@ const (
 	// jenkins
 	JenkinsBuildImage = "JENKINS_BUILD_IMAGE"
 
+	// dind
+	DindImage = "DIND_IMAGE"
+
 	DebugMode   = "debug"
 	ReleaseMode = "release"
 	TestMode    = "test"
@@ -170,6 +173,10 @@ const (
 	EditorIDAnnotation              = companyLabel + "/" + "editor-id"
 	LastUpdateTimeAnnotation        = companyLabel + "/" + "last-update-time"
 
+	JobLabelTaskKey  = "s-task"
+	JobLabelNameKey  = "s-name"
+	JobLabelSTypeKey = "s-type"
+
 	LabelValueTrue = "true"
 
 	// Pod status
@@ -205,6 +212,10 @@ const (
 	RSASecretName = "zadig-rsa-key"
 
 	DefaultImagePullSecret = "default-registry-secret"
+
+	PolicyMetaConfigMapName = "zadig-policy-meta"
+	PolicyURLConfigMapName  = "zadig-policy-url"
+	PolicyRoleConfigMapName = "zadig-policy-role"
 )
 
 const (
@@ -222,7 +233,8 @@ const (
 	// helm deployment
 	HelmDeployType = "helm"
 	// PMDeployType physical machine deploy method
-	PMDeployType = "pm"
+	PMDeployType          = "pm"
+	TrusteeshipDeployType = "trusteeship"
 
 	// Infrastructure k8s type
 	BasicFacilityK8S = "kubernetes"
@@ -336,6 +348,7 @@ const (
 	PipelineTaskFmt   = "PipelineTask:%s"
 	WorkflowTaskFmt   = "WorkflowTask:%s"
 	WorkflowTaskV3Fmt = "WorkflowTaskV3:%s"
+	WorkflowTaskV4Fmt = "WorkflowTaskV4:%s"
 	TestTaskFmt       = "TestTask:%s"
 	ServiceTaskFmt    = "ServiceTask:%s"
 	ScanningTaskFmt   = "ScanningTask:%s"

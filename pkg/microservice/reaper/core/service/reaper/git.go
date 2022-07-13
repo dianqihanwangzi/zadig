@@ -194,10 +194,15 @@ func (r *Reaper) buildGitCommands(repo *meta.Repo, hostNames sets.String) []*c.C
 		cmds = append(cmds, &c.Command{Cmd: c.RemoteRemove(repo.RemoteName), DisableTrace: true, IgnoreError: true})
 	}
 
+	// namespace represents the real owner
+	owner := repo.Namespace
+	if len(owner) == 0 {
+		owner = repo.Owner
+	}
 	if repo.Source == meta.ProviderGitlab {
 		u, _ := url.Parse(repo.Address)
 		cmds = append(cmds, &c.Command{
-			Cmd:          c.RemoteAdd(repo.RemoteName, r.Ctx.Git.OAuthCloneURL(repo.Source, repo.OauthToken, u.Host, repo.Owner, repo.Name, u.Scheme)),
+			Cmd:          c.RemoteAdd(repo.RemoteName, r.Ctx.Git.OAuthCloneURL(repo.Source, repo.OauthToken, u.Host, owner, repo.Name, u.Scheme)),
 			DisableTrace: true,
 		})
 	} else if repo.Source == meta.ProviderGerrit {
@@ -213,27 +218,31 @@ func (r *Reaper) buildGitCommands(repo *meta.Repo, hostNames sets.String) []*c.C
 		u, _ := url.Parse(repo.Address)
 		user := url.QueryEscape(repo.User)
 		cmds = append(cmds, &c.Command{
-			Cmd:          c.RemoteAdd(repo.RemoteName, fmt.Sprintf("%s://%s:%s@%s/%s/%s.git", u.Scheme, user, repo.Password, u.Host, repo.Owner, repo.Name)),
+			Cmd:          c.RemoteAdd(repo.RemoteName, fmt.Sprintf("%s://%s:%s@%s/%s/%s.git", u.Scheme, user, repo.Password, u.Host, owner, repo.Name)),
 			DisableTrace: true,
 		})
 	} else if repo.Source == meta.ProviderGitee {
 		cmds = append(cmds, &c.Command{Cmd: c.RemoteAdd(repo.RemoteName, r.Ctx.Git.HTTPSCloneURL(repo.Source, repo.OauthToken, repo.Owner, repo.Name)), DisableTrace: true})
 	} else if repo.Source == meta.ProviderOther {
 		if repo.AuthType == types.SSHAuthType {
-			host := getHost(repo.OtherAddress)
+			host := getHost(repo.Address)
 			if !hostNames.Has(host) {
 				if err := writeSSHFile(repo.SSHKey, host); err != nil {
 					log.Errorf("failed to write ssh file %s: %s", repo.SSHKey, err)
 				}
 				hostNames.Insert(host)
 			}
-
+			remoteName := fmt.Sprintf("%s:%s/%s.git", repo.Address, repo.Owner, repo.Name)
+			// Including the case of the port
+			if strings.Contains(repo.Address, ":") {
+				remoteName = fmt.Sprintf("%s/%s/%s.git", repo.Address, repo.Owner, repo.Name)
+			}
 			cmds = append(cmds, &c.Command{
-				Cmd:          c.RemoteAdd(repo.RemoteName, repo.OtherAddress),
+				Cmd:          c.RemoteAdd(repo.RemoteName, remoteName),
 				DisableTrace: true,
 			})
 		} else if repo.AuthType == types.PrivateAccessTokenAuthType {
-			u, err := url.Parse(repo.OtherAddress)
+			u, err := url.Parse(repo.Address)
 			if err != nil {
 				log.Errorf("failed to parse url,err:%s", err)
 			} else {
@@ -245,7 +254,7 @@ func (r *Reaper) buildGitCommands(repo *meta.Repo, hostNames sets.String) []*c.C
 		}
 	} else {
 		// github
-		cmds = append(cmds, &c.Command{Cmd: c.RemoteAdd(repo.RemoteName, r.Ctx.Git.HTTPSCloneURL(repo.Source, repo.OauthToken, repo.Owner, repo.Name)), DisableTrace: true})
+		cmds = append(cmds, &c.Command{Cmd: c.RemoteAdd(repo.RemoteName, r.Ctx.Git.HTTPSCloneURL(repo.Source, repo.OauthToken, owner, repo.Name)), DisableTrace: true})
 	}
 
 	ref := repo.Ref()
@@ -288,7 +297,9 @@ func writeSSHFile(sshKey, hostName string) error {
 		return fmt.Errorf("hostName cannot be empty")
 	}
 
-	pathName := fmt.Sprintf("/.ssh/id_rsa.%s", strings.Replace(hostName, ".", "", -1))
+	hostName = strings.Replace(hostName, ".", "", -1)
+	hostName = strings.Replace(hostName, ":", "", -1)
+	pathName := fmt.Sprintf("/.ssh/id_rsa.%s", hostName)
 	file := path.Join(config.Home(), pathName)
 	return ioutil.WriteFile(file, []byte(sshKey), 0400)
 }
@@ -296,7 +307,9 @@ func writeSSHFile(sshKey, hostName string) error {
 func writeSSHConfigFile(hostNames sets.String, proxy *meta.Proxy) error {
 	out := "\nHOST *\nStrictHostKeyChecking=no\nUserKnownHostsFile=/dev/null\n"
 	for _, hostName := range hostNames.List() {
-		out += fmt.Sprintf("\nHost %s\nIdentityFile ~/.ssh/id_rsa.%s\n", hostName, strings.Replace(hostName, ".", "", -1))
+		name := strings.Replace(hostName, ".", "", -1)
+		name = strings.Replace(name, ":", "", -1)
+		out += fmt.Sprintf("\nHost %s\nIdentityFile ~/.ssh/id_rsa.%s\n", hostName, name)
 		if proxy.EnableRepoProxy && proxy.Type == "socks5" {
 			out = out + fmt.Sprintf("ProxyCommand nc -x %s %%h %%p\n", proxy.GetProxyURL())
 		}
@@ -305,14 +318,11 @@ func writeSSHConfigFile(hostNames sets.String, proxy *meta.Proxy) error {
 	return ioutil.WriteFile(file, []byte(out), 0600)
 }
 
-// git@github.com:koderover/zadig.git
+// git@github.com or git@github.com:2000
 // return github.com
 func getHost(address string) string {
+	address = strings.TrimPrefix(address, "ssh://")
+	address = strings.TrimPrefix(address, "git@")
 	hostArr := strings.Split(address, ":")
-	host := hostArr[0]
-	host = strings.TrimPrefix(host, "git@")
-	if len(hostArr) > 2 {
-		return fmt.Sprintf("%s:%s", host, hostArr[1])
-	}
-	return host
+	return hostArr[0]
 }
