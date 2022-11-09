@@ -5,6 +5,7 @@
 .PHONY: microservice.push
 
 
+
 IMAGE_REPOSITORY = koderover.tencentcloudcr.com/koderover-public
 VERSION ?= $(shell date +'%Y%m%d%H%M%S')
 VERSION := $(VERSION)
